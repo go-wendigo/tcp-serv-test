@@ -10,7 +10,6 @@ import (
 	"net"
 	"strings"
 	"sync"
-
 	msg "tcp-serv-test/internal/message"
 
 	uuid "github.com/satori/go.uuid"
@@ -122,7 +121,7 @@ func (s *Server) handleConnection(connID string, conn net.Conn) {
 			break
 		}
 		content, _ := msg.Decode(data)
-		if !strings.HasPrefix(content, "[client-message]") {
+		if !strings.HasPrefix(content, msg.ClientMessageHeaderPrefix) {
 			log.Printf("wrong content format from %q\n", conn.RemoteAddr().String())
 		}
 

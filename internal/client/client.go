@@ -13,13 +13,6 @@ import (
 	"tcp-serv-test/internal/message"
 )
 
-const (
-	headerTypeNewClient = iota
-	headerTypeClientList
-	headerTypeDisconnectClient
-	headerTypeClientMessage
-)
-
 type messageContent struct {
 	headerType int
 	content    string
@@ -125,16 +118,16 @@ func (c *Client) listenMessages(notify chan error) {
 		}
 
 		switch messageVal.headerType {
-		case headerTypeNewClient:
+		case message.HeaderTypeNewClient:
 			c.clients[content] = true
 			content = "new client: " + messageVal.content
-		case headerTypeClientList:
+		case message.HeaderTypeClientList:
 			c.clients[content] = true
 			content = "existed client: " + messageVal.content
-		case headerTypeDisconnectClient:
+		case message.HeaderTypeDisconnectClient:
 			delete(c.clients, content)
 			content = "client disconnected: " + messageVal.content
-		case headerTypeClientMessage:
+		case message.HeaderTypeClientMessage:
 			content = messageVal.content
 		}
 
@@ -143,28 +136,28 @@ func (c *Client) listenMessages(notify chan error) {
 }
 
 func (c Client) getMessageVal(content string) (messageContent, error) {
-	if strings.HasPrefix(content, "[new-client]") {
+	if strings.HasPrefix(content, message.NewClientHeaderPrefix) {
 		return messageContent{
-			headerTypeNewClient,
-			strings.TrimPrefix(content, "[new-client]"),
+			message.HeaderTypeNewClient,
+			strings.TrimPrefix(content, message.NewClientHeaderPrefix),
 		}, nil
 	}
-	if strings.HasPrefix(content, "[clients-list]") {
+	if strings.HasPrefix(content, message.ClientsListHeaderPrefix) {
 		return messageContent{
-			headerTypeClientList,
-			strings.TrimPrefix(content, "[clients-list]"),
+			message.HeaderTypeClientList,
+			strings.TrimPrefix(content, message.ClientsListHeaderPrefix),
 		}, nil
 	}
-	if strings.HasPrefix(content, "[client-disconnect]") {
+	if strings.HasPrefix(content, message.ClientDisconnectHeaderPrefix) {
 		return messageContent{
-			headerTypeDisconnectClient,
-			strings.TrimPrefix(content, "[client-disconnect]"),
+			message.HeaderTypeDisconnectClient,
+			strings.TrimPrefix(content, message.ClientDisconnectHeaderPrefix),
 		}, nil
 	}
-	if strings.HasPrefix(content, "[client-message]") {
+	if strings.HasPrefix(content, message.ClientMessageHeaderPrefix) {
 		return messageContent{
-			headerTypeClientMessage,
-			strings.TrimPrefix(content, "[client-message]"),
+			message.HeaderTypeClientMessage,
+			strings.TrimPrefix(content, message.ClientMessageHeaderPrefix),
 		}, nil
 	}
 	return messageContent{}, errors.New("wrong message format")
