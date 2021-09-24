@@ -122,26 +122,40 @@ func (s *Server) handleConnection(connID string, conn net.Conn) {
 }
 
 func (s *Server) sendMessages() {
+	writeMessage := func(connID string, connValue interface{}, m *message) {
+		conn, ok := connValue.(net.Conn)
+		if !ok {
+			log.Printf("can't send message to %q, connection is failed", connID)
+			return
+		}
+		if _, err := conn.Write(m.data); err != nil {
+			log.Printf("can't send message to %q", connID)
+		}
+	}
+
 	for message := range s.messages {
 		message := message
+
+		if message.recipient != "" {
+			conn, ok := s.connMap.Load(message.recipient)
+			if !ok {
+				log.Printf("client %q does not connected", message.recipient)
+			}
+			writeMessage(message.recipient, conn, message)
+			continue
+		}
+
 		s.connMap.Range(func(key, value interface{}) bool {
 			connID, ok := key.(string)
 			if !ok {
 				return true
 			}
 
-			if connID == message.author ||
-				message.recipient != "" && message.recipient != connID {
+			if connID == message.author {
 				return true
 			}
 
-			conn, ok := value.(net.Conn)
-			if !ok {
-				log.Printf("can't send message to %q, connection is failed", connID)
-			}
-			if _, err := conn.Write(message.data); err != nil {
-				log.Printf("can't send message to %q", connID)
-			}
+			writeMessage(connID, value, message)
 			return true
 		})
 	}
