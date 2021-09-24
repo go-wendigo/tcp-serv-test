@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 
 	msg "tcp-serv-test/internal/message"
@@ -20,6 +23,7 @@ type Server struct {
 	connMap  sync.Map
 	messages chan *message
 	group    *sync.WaitGroup
+	stops    bool
 }
 
 // New creates new Server
@@ -65,6 +69,7 @@ func (s *Server) Serve() {
 
 // Stop stops server, closes connections
 func (s *Server) Stop(ctx context.Context) {
+	s.stops = true
 	done := make(chan struct{})
 
 	go func() {
@@ -106,8 +111,19 @@ func (s *Server) handleConnection(connID string, conn net.Conn) {
 	for {
 		data, err := msg.Read(reader)
 		if err != nil {
+			if s.stops {
+				return
+			}
+			if err == io.EOF {
+				s.clientDisconnectNotify(connID)
+				return
+			}
 			log.Printf("wrong message format from %q\n", conn.RemoteAddr().String())
 			break
+		}
+		content, _ := msg.Decode(data)
+		if !strings.HasPrefix(content, "[client-message]") {
+			log.Printf("wrong content format from %q\n", conn.RemoteAddr().String())
 		}
 
 		m := &message{
@@ -134,6 +150,9 @@ func (s *Server) sendMessages() {
 	}
 
 	for message := range s.messages {
+		if s.stops {
+			return
+		}
 		message := message
 
 		if message.recipient != "" {
@@ -162,11 +181,11 @@ func (s *Server) sendMessages() {
 }
 
 func (s *Server) getRecipient(m []byte) string {
-	if len(m) < 3 || m[2] != '@' {
+	if len(m) < 3 || m[18] != '@' {
 		return ""
 	}
 
-	recipientID := uuid.FromStringOrNil(string(m[3:39]))
+	recipientID := uuid.FromStringOrNil(string(m[19:55]))
 	if recipientID == uuid.Nil {
 		return ""
 	}
@@ -199,4 +218,15 @@ func (s *Server) notifyNewClient(connID string) error {
 	})
 
 	return nil
+}
+
+func (s *Server) clientDisconnectNotify(id string) {
+	disconnectHeader, err := msg.Encode(fmt.Sprintf("%s%s", "[client-disconnect]", id))
+	if err != nil {
+		log.Println("fail to send disconnect header", err)
+	}
+	s.messages <- &message{
+		author: id,
+		data:   disconnectHeader,
+	}
 }

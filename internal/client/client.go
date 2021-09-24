@@ -2,19 +2,33 @@ package client
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"strings"
-	"tcp-serv-test/internal/message"
 	"time"
+
+	"tcp-serv-test/internal/message"
 )
+
+const (
+	headerTypeNewClient = iota
+	headerTypeClientList
+	headerTypeDisconnectClient
+	headerTypeClientMessage
+)
+
+type messageContent struct {
+	headerType int
+	content    string
+}
 
 // Client tcp chat client
 type Client struct {
 	address string
-	clients []string
+	clients map[string]bool
 	conn    net.Conn
 	stops   bool
 }
@@ -23,6 +37,7 @@ type Client struct {
 func New(address string) *Client {
 	return &Client{
 		address: address,
+		clients: map[string]bool{},
 	}
 }
 
@@ -69,7 +84,7 @@ func (c *Client) listenInput(notify chan error) {
 				notify <- err
 				return
 			}
-			m, err := message.Encode(strings.Trim(input, "\n "))
+			m, err := message.Encode(fmt.Sprintf("%s%s", "[client-message]", strings.Trim(input, "\n ")))
 			if err != nil {
 				notify <- err
 				return
@@ -103,14 +118,56 @@ func (c *Client) listenMessages(notify chan error) {
 			notify <- err
 			return
 		}
-		if strings.HasPrefix(content, "[new-client]") || strings.HasPrefix(content, "[clients-list]") {
-			headerParts := strings.Split(content, "]")
-			if len(headerParts) > 1 {
-				c.clients = append(c.clients, headerParts[1])
-			}
+
+		messageVal, err := c.getMessageVal(content)
+		if err != nil {
+			log.Println("unexpected message format")
 		}
+
+		switch messageVal.headerType {
+		case headerTypeNewClient:
+			c.clients[content] = true
+			content = "new client: " + messageVal.content
+		case headerTypeClientList:
+			c.clients[content] = true
+			content = "existed client: " + messageVal.content
+		case headerTypeDisconnectClient:
+			delete(c.clients, content)
+			content = "client disconnected: " + messageVal.content
+		case headerTypeClientMessage:
+			content = messageVal.content
+		}
+
 		fmt.Println(content)
 	}
+}
+
+func (c Client) getMessageVal(content string) (messageContent, error) {
+	if strings.HasPrefix(content, "[new-client]") {
+		return messageContent{
+			headerTypeNewClient,
+			strings.TrimPrefix(content, "[new-client]"),
+		}, nil
+	}
+	if strings.HasPrefix(content, "[clients-list]") {
+		return messageContent{
+			headerTypeClientList,
+			strings.TrimPrefix(content, "[clients-list]"),
+		}, nil
+	}
+	if strings.HasPrefix(content, "[client-disconnect]") {
+		return messageContent{
+			headerTypeDisconnectClient,
+			strings.TrimPrefix(content, "[client-disconnect]"),
+		}, nil
+	}
+	if strings.HasPrefix(content, "[client-message]") {
+		return messageContent{
+			headerTypeClientMessage,
+			strings.TrimPrefix(content, "[client-message]"),
+		}, nil
+	}
+	return messageContent{}, errors.New("wrong message format")
 }
 
 // Stop stops chat client
