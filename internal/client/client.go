@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"tcp-serv-test/internal/message"
 	"time"
 )
@@ -16,29 +15,35 @@ import (
 type Client struct {
 	address string
 	clients []string
-	lock    *sync.Mutex
 	conn    net.Conn
+	stops   bool
 }
 
 // New creates new Client
 func New(address string) *Client {
 	return &Client{
 		address: address,
-		lock:    new(sync.Mutex),
 	}
 }
 
 // Start starts chat client
 func (c *Client) Start() {
-	conn, _ := net.Dial("tcp", c.address)
+	addr, err := net.ResolveTCPAddr("tcp", c.address)
+	if err != nil {
+		log.Fatalf("wrong server address %s", c.address)
+	}
+	conn, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
 	c.conn = conn
 
-	err := conn.(*net.TCPConn).SetKeepAlive(true)
+	err = conn.SetKeepAlive(true)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	err = conn.(*net.TCPConn).SetKeepAlivePeriod(30 * time.Second)
+	err = conn.SetKeepAlivePeriod(30 * time.Second)
 	if err != nil {
 		log.Println(err)
 		return
@@ -46,50 +51,70 @@ func (c *Client) Start() {
 
 	notify := make(chan error)
 
-	go func() {
-		for {
-			msg, err := message.Read(conn)
-			if err != nil {
-				notify <- err
-			}
-			content, err := message.Decode(msg)
-			if err != nil {
-				notify <- err
-			}
-			if strings.HasPrefix(content, "[new-client]") || strings.HasPrefix(content, "[clients-list]") {
-				split := strings.Split(content, "]")
-				c.lock.Lock()
-				c.clients = append(c.clients, split[1])
-				c.lock.Unlock()
-			}
-			fmt.Println(content)
-		}
-	}()
+	go c.listenMessages(notify)
+	go c.listenInput(notify)
 
-	go func() {
+	err = <-notify
+	if err != nil {
+		log.Fatalf("connection dropped message: %s", err.Error())
+	}
+}
+
+func (c *Client) listenInput(notify chan error) {
+	func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
 			input, err := reader.ReadString('\n')
 			if err != nil {
 				notify <- err
+				return
 			}
 			m, err := message.Encode(strings.Trim(input, "\n "))
 			if err != nil {
 				notify <- err
+				return
 			}
-			_, err = conn.Write(m)
+			_, err = c.conn.Write(m)
 			if err != nil {
+				if c.stops {
+					close(notify)
+					return
+				}
 				notify <- err
+				return
 			}
 		}
 	}()
+}
 
-	err = <-notify
-	log.Println("connection dropped message", err)
-	return
+func (c *Client) listenMessages(notify chan error) {
+	for {
+		msg, err := message.Read(c.conn)
+		if err != nil {
+			if c.stops {
+				close(notify)
+				return
+			}
+			notify <- err
+			return
+		}
+		content, err := message.Decode(msg)
+		if err != nil {
+			notify <- err
+			return
+		}
+		if strings.HasPrefix(content, "[new-client]") || strings.HasPrefix(content, "[clients-list]") {
+			headerParts := strings.Split(content, "]")
+			if len(headerParts) > 1 {
+				c.clients = append(c.clients, headerParts[1])
+			}
+		}
+		fmt.Println(content)
+	}
 }
 
 // Stop stops chat client
 func (c *Client) Stop() {
+	c.stops = true
 	_ = c.conn.Close()
 }
